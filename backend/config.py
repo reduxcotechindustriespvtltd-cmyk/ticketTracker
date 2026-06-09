@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_HOURS: int = 8
     AES_KEY: str = "CHANGE-ME-32-BYTES-PLACEHOLDER!!"  # Must be exactly 32 chars
     DEMO_MODE: bool = False
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:3000,https://tickettracker-production.up.railway.app"
 
     @property
     def allowed_origins(self) -> list[str]:
