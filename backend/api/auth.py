@@ -4,7 +4,6 @@ import bcrypt
 
 from ..models import User
 from ..auth.jwt import create_access_token
-from ..rate_limiter import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -23,7 +22,6 @@ class LoginResponse(BaseModel):
 
 
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit("10/minute")
 async def login(request: Request, body: LoginRequest):
     user = await User.find_one(User.email == body.email)
     if not user:
