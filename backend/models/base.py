@@ -1,5 +1,1 @@
-from sqlalchemy.orm import DeclarativeBase
-
-
-class Base(DeclarativeBase):
-    pass
+# SQLAlchemy Base removed — project migrated to MongoDB/Beanie

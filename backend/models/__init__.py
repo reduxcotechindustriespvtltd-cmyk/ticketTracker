@@ -1,12 +1,11 @@
-from .base import Base
 from .user import User
 from .amadeus_config import AmadeusConfig
-from .ticket import Ticket
-from .refund_rule import RefundRule
+from .ticket import Ticket, CouponStatus, TicketTag
+from .refund_rule import RefundRule, PenaltyType
 from .sync_log import SyncLog
 from .audit_trail import AuditTrail
 
 __all__ = [
-    "Base", "User", "AmadeusConfig", "Ticket",
-    "RefundRule", "SyncLog", "AuditTrail",
+    "User", "AmadeusConfig", "Ticket", "CouponStatus", "TicketTag",
+    "RefundRule", "PenaltyType", "SyncLog", "AuditTrail",
 ]

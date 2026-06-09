@@ -1,11 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from beanie import PydanticObjectId
 from typing import Optional
 from datetime import date
-from decimal import Decimal
 
-from ..database import get_db
 from ..models import Ticket, User
 from ..models.ticket import TicketTag
 from ..auth.dependencies import get_current_user
@@ -15,7 +12,7 @@ router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 def ticket_to_dict(t: Ticket) -> dict:
     return {
-        "id": t.id,
+        "id": str(t.id),
         "ticket_number": t.ticket_number,
         "pnr_locator": t.pnr_locator,
         "passenger_name": t.passenger_name,
@@ -28,12 +25,12 @@ def ticket_to_dict(t: Ticket) -> dict:
         "coupon_status": t.coupon_status.value if t.coupon_status else None,
         "tag": t.tag.value if t.tag else None,
         "fare_basis_code": t.fare_basis_code,
-        "base_fare": float(t.base_fare) if t.base_fare else None,
-        "tax_amount": float(t.tax_amount) if t.tax_amount else None,
-        "total_fare": float(t.total_fare) if t.total_fare else None,
+        "base_fare": t.base_fare,
+        "tax_amount": t.tax_amount,
+        "total_fare": t.total_fare,
         "currency": t.currency,
-        "cancellation_penalty": float(t.cancellation_penalty) if t.cancellation_penalty else None,
-        "net_refund_amount": float(t.net_refund_amount) if t.net_refund_amount else None,
+        "cancellation_penalty": t.cancellation_penalty,
+        "net_refund_amount": t.net_refund_amount,
         "pnr_cancelled_at": t.pnr_cancelled_at.isoformat() if t.pnr_cancelled_at else None,
         "categorised_at": t.categorised_at.isoformat() if t.categorised_at else None,
         "last_synced_at": t.last_synced_at.isoformat() if t.last_synced_at else None,
@@ -46,7 +43,6 @@ def ticket_to_dict(t: Ticket) -> dict:
 
 
 def _days_until_expiry(t: Ticket) -> Optional[int]:
-    """Days until the refund deadline (stored on ticket) or falls back to departure date."""
     deadline = t.refund_deadline or t.departure_date
     if not deadline:
         return None
@@ -54,7 +50,7 @@ def _days_until_expiry(t: Ticket) -> Optional[int]:
 
 
 @router.get("")
-def list_tickets(
+async def list_tickets(
     tag: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
@@ -63,28 +59,34 @@ def list_tickets(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    q = db.query(Ticket).filter(Ticket.tenant_id == current_user.id)
+    filters = [Ticket.tenant_id == current_user.id]
 
     if tag:
-        q = q.filter(Ticket.tag == tag)
+        filters.append(Ticket.tag == tag)
     if carrier:
-        q = q.filter(Ticket.carrier_code == carrier)
+        filters.append(Ticket.carrier_code == carrier)
     if departure_from:
-        q = q.filter(Ticket.departure_date >= departure_from)
+        filters.append(Ticket.departure_date >= departure_from)
     if departure_to:
-        q = q.filter(Ticket.departure_date <= departure_to)
+        filters.append(Ticket.departure_date <= departure_to)
+
+    query = Ticket.find(*filters)
+
     if search:
-        pattern = f"%{search}%"
-        q = q.filter(
-            Ticket.passenger_name.ilike(pattern)
-            | Ticket.ticket_number.ilike(pattern)
-            | Ticket.pnr_locator.ilike(pattern)
+        from beanie.operators import Or, RegEx
+        pattern = f".*{search}.*"
+        query = Ticket.find(
+            *filters,
+            Or(
+                RegEx(Ticket.passenger_name, pattern, "i"),
+                RegEx(Ticket.ticket_number, pattern, "i"),
+                RegEx(Ticket.pnr_locator, pattern, "i"),
+            ),
         )
 
-    total = q.count()
-    tickets = q.order_by(Ticket.departure_date.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    total = await query.count()
+    tickets = await query.sort(-Ticket.departure_date).skip((page - 1) * page_size).limit(page_size).to_list()
 
     return {
         "total": total,
@@ -95,44 +97,39 @@ def list_tickets(
 
 
 @router.get("/summary")
-def get_summary(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    base = db.query(Ticket).filter(Ticket.tenant_id == current_user.id)
+async def get_summary(current_user: User = Depends(get_current_user)):
+    uid = current_user.id
+    total = await Ticket.find(Ticket.tenant_id == uid).count()
+    no_show = await Ticket.find(Ticket.tenant_id == uid, Ticket.tag == TicketTag.no_show).count()
+    cancelled = await Ticket.find(Ticket.tenant_id == uid, Ticket.tag == TicketTag.cancelled_before_dep).count()
 
-    total = base.count()
-    no_show = base.filter(Ticket.tag == TicketTag.no_show).count()
-    cancelled = base.filter(Ticket.tag == TicketTag.cancelled_before_dep).count()
-
-    recoverable = base.filter(
-        Ticket.tag.in_([TicketTag.no_show, TicketTag.cancelled_before_dep]),
-        Ticket.net_refund_amount > 0,
-    )
-    total_recoverable = db.query(func.sum(Ticket.net_refund_amount)).filter(
-        Ticket.tenant_id == current_user.id,
-        Ticket.tag.in_([TicketTag.no_show, TicketTag.cancelled_before_dep]),
-        Ticket.net_refund_amount > 0,
-    ).scalar() or 0
+    recoverable_tags = [TicketTag.no_show.value, TicketTag.cancelled_before_dep.value]
+    pipeline = [
+        {"$match": {"tenant_id": uid, "tag": {"$in": recoverable_tags}, "net_refund_amount": {"$gt": 0}}},
+        {"$group": {"_id": None, "total": {"$sum": "$net_refund_amount"}, "count": {"$sum": 1}}},
+    ]
+    result = await Ticket.get_motor_collection().aggregate(pipeline).to_list(1)
+    total_recoverable = result[0]["total"] if result else 0
+    recoverable_count = result[0]["count"] if result else 0
 
     return {
         "total_tickets": total,
         "no_show": no_show,
         "cancelled_before_dep": cancelled,
         "total_recoverable_value": float(total_recoverable),
-        "recoverable_tickets": recoverable.count(),
+        "recoverable_tickets": recoverable_count,
     }
 
 
 @router.get("/{ticket_id}")
-def get_ticket(
-    ticket_id: int,
+async def get_ticket(
+    ticket_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    ticket = db.query(Ticket).filter(
-        Ticket.id == ticket_id, Ticket.tenant_id == current_user.id
-    ).first()
+    ticket = await Ticket.find_one(
+        Ticket.id == PydanticObjectId(ticket_id),
+        Ticket.tenant_id == current_user.id,
+    )
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
     return ticket_to_dict(ticket)

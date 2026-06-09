@@ -1,19 +1,13 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from motor.motor_asyncio import AsyncIOMotorClient
+from beanie import init_beanie
 from .config import settings
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def init_db() -> None:
+    client = AsyncIOMotorClient(settings.MONGODB_URL)
+    from .models import User, Ticket, RefundRule, AuditTrail, SyncLog, AmadeusConfig
+    db_name = settings.MONGODB_URL.rsplit("/", 1)[-1].split("?")[0] or "tickettrack"
+    await init_beanie(
+        database=client[db_name],
+        document_models=[User, Ticket, RefundRule, AuditTrail, SyncLog, AmadeusConfig],
+    )

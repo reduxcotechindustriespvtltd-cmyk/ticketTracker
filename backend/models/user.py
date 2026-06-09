@@ -1,12 +1,14 @@
-from sqlalchemy import Column, Integer, String, DateTime, func
-from .base import Base
+from typing import Annotated
+from datetime import datetime, timezone
+from beanie import Document, Indexed
+from pydantic import Field
 
 
-class User(Base):
-    __tablename__ = "users"
+class User(Document):
+    email: Annotated[str, Indexed(unique=True)]
+    password_hash: str
+    role: str = "user"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(255), unique=True, nullable=False, index=True)
-    password_hash = Column(String(255), nullable=False)
-    role = Column(String(50), nullable=False, default="user")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    class Settings:
+        name = "users"

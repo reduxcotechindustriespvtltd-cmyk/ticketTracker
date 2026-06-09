@@ -1,10 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from pydantic import BaseModel, model_validator
 from datetime import date
 from typing import Optional
 
-from ..database import get_db
 from ..models import SyncLog, AmadeusConfig, User
 from ..auth.dependencies import get_current_user
 from ..tasks.sync import sync_amadeus_tickets
@@ -29,17 +27,16 @@ class SyncRequest(BaseModel):
 
 
 @router.post("/manual")
-def trigger_manual_sync(
+async def trigger_manual_sync(
     body: SyncRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    config = db.query(AmadeusConfig).filter(AmadeusConfig.user_id == current_user.id).first()
+    config = await AmadeusConfig.find_one(AmadeusConfig.user_id == current_user.id)
     if not config:
         raise HTTPException(status_code=400, detail="Amadeus config not set up")
 
     task = sync_amadeus_tickets.delay(
-        current_user.id,
+        str(current_user.id),
         body.start_date.isoformat(),
         body.end_date.isoformat() if body.end_date else None,
     )
@@ -47,16 +44,11 @@ def trigger_manual_sync(
 
 
 @router.get("/status")
-def get_sync_status(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    last_log = (
-        db.query(SyncLog)
-        .filter(SyncLog.tenant_id == current_user.id)
-        .order_by(SyncLog.synced_at.desc())
-        .first()
-    )
+async def get_sync_status(current_user: User = Depends(get_current_user)):
+    last_log = await SyncLog.find(
+        SyncLog.tenant_id == current_user.id
+    ).sort(-SyncLog.synced_at).first_or_none()
+
     if not last_log:
         return {"last_sync": None}
 

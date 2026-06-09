@@ -3,12 +3,12 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql://tickettrack:tickettrack@localhost:5432/tickettrack"
+    MONGODB_URL: str = "mongodb://localhost:27017/tickettrack"
     REDIS_URL: str = "redis://localhost:6379/0"
     SECRET_KEY: str = "CHANGE-ME"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_HOURS: int = 8
-    AES_KEY: str = "CHANGE-ME-32-BYTES-PLACEHOLDER!!"  # Must be exactly 32 chars
+    AES_KEY: str = "CHANGE-ME-32-BYTES-PLACEHOLDER!!"
     DEMO_MODE: bool = False
     CORS_ORIGINS: str = "http://localhost:3000,https://tickettracker-production.up.railway.app"
 

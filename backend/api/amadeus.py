@@ -1,10 +1,8 @@
 import re
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from pydantic import BaseModel, field_validator
 from typing import Optional
 
-from ..database import get_db
 from ..models import AmadeusConfig, User
 from ..auth.dependencies import get_current_user
 from ..utils.encryption import encrypt
@@ -26,7 +24,7 @@ class AmadeusConfigCreate(BaseModel):
     def validate_office_id(cls, v: str) -> str:
         v = v.strip().upper()
         if not _OFFICE_ID_RE.match(v):
-            raise ValueError("Office ID must be 9 characters: 3-letter city + 2 + 4 alphanumeric (e.g. BOMXX1234)")
+            raise ValueError("Office ID must be 9 characters: 3-letter city + 2 + 4 alphanumeric")
         return v
 
     @field_validator("wsap_endpoint")
@@ -39,44 +37,38 @@ class AmadeusConfigCreate(BaseModel):
 
 
 @router.post("/config")
-def save_config(
+async def save_config(
     body: AmadeusConfigCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    existing = db.query(AmadeusConfig).filter(AmadeusConfig.user_id == current_user.id).first()
-
     encrypted_user = encrypt(body.wsap_user)
     encrypted_pass = encrypt(body.wsap_pass)
     encrypted_totp = encrypt(body.totp_secret) if body.totp_secret else None
 
+    existing = await AmadeusConfig.find_one(AmadeusConfig.user_id == current_user.id)
     if existing:
         existing.office_id = body.office_id
         existing.wsap_endpoint = body.wsap_endpoint
         existing.wsap_user_encrypted = encrypted_user
         existing.wsap_pass_encrypted = encrypted_pass
         existing.totp_secret_encrypted = encrypted_totp
+        await existing.save()
     else:
-        config = AmadeusConfig(
+        await AmadeusConfig(
             user_id=current_user.id,
             office_id=body.office_id,
             wsap_endpoint=body.wsap_endpoint,
             wsap_user_encrypted=encrypted_user,
             wsap_pass_encrypted=encrypted_pass,
             totp_secret_encrypted=encrypted_totp,
-        )
-        db.add(config)
+        ).insert()
 
-    db.commit()
     return {"message": "Amadeus config saved"}
 
 
 @router.get("/config/status")
-def get_config_status(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    config = db.query(AmadeusConfig).filter(AmadeusConfig.user_id == current_user.id).first()
+async def get_config_status(current_user: User = Depends(get_current_user)):
+    config = await AmadeusConfig.find_one(AmadeusConfig.user_id == current_user.id)
     return {
         "configured": config is not None,
         "office_id": config.office_id if config else None,
@@ -86,14 +78,10 @@ def get_config_status(
 
 
 @router.get("/config")
-def get_config(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    config = db.query(AmadeusConfig).filter(AmadeusConfig.user_id == current_user.id).first()
+async def get_config(current_user: User = Depends(get_current_user)):
+    config = await AmadeusConfig.find_one(AmadeusConfig.user_id == current_user.id)
     if not config:
         raise HTTPException(status_code=404, detail="No Amadeus config found")
-
     return {
         "office_id": config.office_id,
         "wsap_endpoint": config.wsap_endpoint,

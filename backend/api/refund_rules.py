@@ -1,9 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 
-from ..database import get_db
 from ..models import RefundRule, User
 from ..models.refund_rule import PenaltyType
 from ..auth.dependencies import get_current_user, require_admin
@@ -20,14 +18,11 @@ class RefundRuleUpdate(BaseModel):
 
 
 @router.get("")
-def list_rules(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    rules = db.query(RefundRule).all()
+async def list_rules(current_user: User = Depends(get_current_user)):
+    rules = await RefundRule.find_all().to_list()
     return [
         {
-            "id": r.id,
+            "id": str(r.id),
             "carrier_code": r.carrier_code,
             "fare_type": r.fare_type,
             "refund_window_days": r.refund_window_days,
@@ -40,22 +35,28 @@ def list_rules(
 
 
 @router.put("/{carrier}")
-def update_rule(
+async def update_rule(
     carrier: str,
     body: RefundRuleUpdate,
     current_user: User = Depends(require_admin),
-    db: Session = Depends(get_db),
 ):
     carrier = carrier.upper()
-    rule = db.query(RefundRule).filter(RefundRule.carrier_code == carrier).first()
-    if not rule:
-        rule = RefundRule(carrier_code=carrier)
-        db.add(rule)
-
-    rule.fare_type = body.fare_type
-    rule.refund_window_days = body.refund_window_days
-    rule.noshow_window_days = body.noshow_window_days
-    rule.penalty_type = body.penalty_type
-    rule.penalty_value = body.penalty_value
-    db.commit()
+    rule = await RefundRule.find_one(RefundRule.carrier_code == carrier)
+    if rule:
+        rule.fare_type = body.fare_type
+        rule.refund_window_days = body.refund_window_days
+        rule.noshow_window_days = body.noshow_window_days
+        rule.penalty_type = body.penalty_type
+        rule.penalty_value = body.penalty_value
+        await rule.save()
+    else:
+        rule = RefundRule(
+            carrier_code=carrier,
+            fare_type=body.fare_type,
+            refund_window_days=body.refund_window_days,
+            noshow_window_days=body.noshow_window_days,
+            penalty_type=body.penalty_type,
+            penalty_value=body.penalty_value,
+        )
+        await rule.insert()
     return {"message": f"Refund rule for {carrier} saved"}

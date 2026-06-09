@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -5,12 +6,21 @@ from slowapi import _rate_limit_exceeded_handler
 
 from .rate_limiter import limiter
 from .config import settings
+from .database import init_db
 from .api import auth, tickets, sync, amadeus, refund_rules, audit, upload, users
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
 
 app = FastAPI(
     title="TicketTrack API",
     description="Airline Ticket Audit & Refund Recovery Platform",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.state.limiter = limiter
